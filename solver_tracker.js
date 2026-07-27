@@ -165,7 +165,6 @@
         return (CAT_HIGH << 20) | (x << 16) | (y << 12) | (z << 8);
     }
 
-    // Главная функция решения
     function solveOFC(rawCardsArray, isUltimate = true) {
         let stayBonus = isUltimate ? 20.4 : 14.5;
         let cards = rawCardsArray.map(parseCard);
@@ -285,16 +284,10 @@
                 <div style="margin-bottom:6px;"><span style="color:#aaa;">MID:</span> <b id="sol-mid" style="color:#f1c40f;">-</b></div>
                 <div style="margin-bottom:6px;"><span style="color:#aaa;">BOT:</span> <b id="sol-bot" style="color:#60a5fa;">-</b></div>
                 <div style="margin-bottom:8px;"><span style="color:#aaa;">DISCARD:</span> <b id="sol-disc" style="color:#ef4444;">-</b></div>
-                <div style="font-size:11px;color:#888;margin-bottom:8px;">Роялти: <b id="sol-roys" style="color:#f1c40f;">0</b> | Повтор: <b id="sol-stay" style="color:#4ade80;">Нет</b></div>
-                <button id="btn-auto-move" style="width:100%;padding:8px;background:#2563eb;color:#fff;font-weight:bold;border:none;border-radius:6px;cursor:pointer;">⚡ Авто-расстановка</button>
+                <div style="font-size:11px;color:#888;">Роялти: <b id="sol-roys" style="color:#f1c40f;">0</b> | Повтор: <b id="sol-stay" style="color:#4ade80;">Нет</b></div>
             </div>
         `;
         parent.appendChild(hud);
-
-        document.getElementById('btn-auto-move').onclick = function () {
-            if (!currentSolution || !lastActiveWS) return alert('Нет решения или сокета!');
-            sendAutoMovePacket(currentSolution, lastActiveWS);
-        };
     }
 
     function displaySolution(sol) {
@@ -311,34 +304,16 @@
         document.getElementById('sol-stay').textContent = sol.stays ? 'ДА 🔥' : 'Нет';
     }
 
-    // Автоматическая отправка пакета расстановки карт
-    function sendAutoMovePacket(sol, ws) {
-        let movesXML = '<MoveCards><Moves>';
-        sol.top.forEach((c, i) => movesXML += `<Move hand="TOP" id="${i}" name="${c}" place="${i}"/>`);
-        sol.mid.forEach((c, i) => movesXML += `<Move hand="MIDDLE" id="${i}" name="${c}" place="${i}"/>`);
-        sol.bot.forEach((c, i) => movesXML += `<Move hand="BACK" id="${i}" name="${c}" place="${i}"/>`);
-        movesXML += '</Moves></MoveCards>';
-
-        try {
-            ws.send(movesXML);
-            alert('✅ Пакет расстановки отправлен на сервер!');
-        } catch (e) {
-            alert('Ошибка отправки пакета!');
-        }
-    }
-
     // ==========================================
     // 3. ПЕРЕХВАТ ВЕБ-СОКЕТОВ И ПАРСИНГ ФАНТАЗИИ
     // ==========================================
     function parseFantasyCardsFromXML(xmlStr) {
         if (!xmlStr || typeof xmlStr !== 'string') return null;
         
-        // Поиск карт в тегах <DealingCards> или <GameState>
         if (xmlStr.includes('<DealingCards') || xmlStr.includes('<GameState')) {
             let cardsMatches = xmlStr.match(/<Card id="\d+">([A-Za-z0-9]+)<\/Card>/g);
             if (cardsMatches) {
                 let cards = cardsMatches.map(m => m.replace(/<[^>]+>/g, ''));
-                // Если сдали от 13 до 17 карт — это Фантазия!
                 if (cards.length >= 13 && cards.length <= 17) {
                     return cards;
                 }
@@ -365,14 +340,13 @@
                     if (sol) {
                         displaySolution(sol);
                     } else {
-                        alert('Ошибка: не удалось найти валидное решение без фола!');
+                        alert('Ошибка: не удалось найти решение без фола!');
                     }
                 }, 50);
             }
         });
     }
 
-    // Перехват отправки и создания сокетов
     var origSend = WebSocket.prototype.send;
     WebSocket.prototype.send = function (data) {
         lastActiveWS = this;
@@ -389,7 +363,6 @@
     HookedWS.prototype = OrigWS.prototype;
     window.WebSocket = HookedWS;
 
-    // Сканер
     try {
         for (var key in window) {
             if (window[key] && window[key] instanceof OrigWS) hookSocket(window[key]);

@@ -5,7 +5,7 @@
     }
     window.__ofcSolverActive = true;
 
-    console.log('🚀 OFC Fantasy Solver & Tracker v5.0 (CSP Bypass Edition) loaded!');
+    console.log('🚀 OFC Fantasy Solver & Tracker v6.0 (Smart Trigger & Collapsible HUD) loaded!');
 
     // ==========================================
     // 1. МАТЕМАТИЧЕСКИЙ ДВИЖОК SOLVER ENGINE
@@ -262,10 +262,11 @@
     }
 
     // ==========================================
-    // 2. ИНТЕРФЕЙС HUD ДЛЯ ПОКЕРДОМА
+    // 2. ИНТЕРФЕЙС HUD ДЛЯ ПОКЕРДОМА (СВОРАЧИВАЕМЫЙ)
     // ==========================================
     let lastActiveWS = null;
     let currentSolution = null;
+    let isCollapsed = true; // По умолчанию свернут!
 
     function renderHUD() {
         var parent = document.body || document.documentElement;
@@ -273,13 +274,17 @@
 
         var hud = document.createElement('div');
         hud.id = 'ofc-solver-hud';
-        hud.style.cssText = 'position:fixed;top:10px;left:10px;z-index:9999999;background:rgba(15,20,30,0.96);color:#fff;font-family:-apple-system,sans-serif;font-size:12px;padding:10px 14px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.8);border:1px solid #3b82f6;max-width:320px;user-select:none;';
+        hud.style.cssText = 'position:fixed;top:10px;left:10px;z-index:9999999;background:rgba(15,20,30,0.96);color:#fff;font-family:-apple-system,sans-serif;font-size:12px;padding:8px 12px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.8);border:1px solid #3b82f6;max-width:320px;user-select:none;transition:all 0.2s ease-in-out;';
+        
         hud.innerHTML = `
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:6px;">
-                <strong style="color:#60a5fa;font-size:13px;">🏎️ OFC Solver</strong>
-                <span id="ofc-status" style="font-size:10px;background:#f39c12;padding:2px 6px;border-radius:10px;">Ожидание...</span>
+            <div id="ofc-header" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <strong style="color:#60a5fa;font-size:13px;">🏎️ OFC Solver</strong>
+                    <span id="ofc-status" style="font-size:10px;background:#f39c12;padding:2px 6px;border-radius:10px;">Ожидание...</span>
+                </div>
+                <span id="ofc-arrow" style="color:#3498db;font-size:14px;margin-left:10px;">🔽</span>
             </div>
-            <div id="ofc-solution-box" style="display:none;">
+            <div id="ofc-solution-box" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.1);">
                 <div style="margin-bottom:6px;"><span style="color:#aaa;">TOP:</span> <b id="sol-top" style="color:#4ade80;">-</b></div>
                 <div style="margin-bottom:6px;"><span style="color:#aaa;">MID:</span> <b id="sol-mid" style="color:#f1c40f;">-</b></div>
                 <div style="margin-bottom:6px;"><span style="color:#aaa;">BOT:</span> <b id="sol-bot" style="color:#60a5fa;">-</b></div>
@@ -288,13 +293,35 @@
             </div>
         `;
         parent.appendChild(hud);
+
+        document.getElementById('ofc-header').onclick = function () {
+            isCollapsed = !isCollapsed;
+            const box = document.getElementById('ofc-solution-box');
+            const arrow = document.getElementById('ofc-arrow');
+            
+            if (isCollapsed) {
+                box.style.display = 'none';
+                arrow.textContent = '🔽';
+            } else {
+                if (currentSolution) {
+                    box.style.display = 'block';
+                    arrow.textContent = '🔼';
+                } else {
+                    isCollapsed = true;
+                }
+            }
+        };
     }
 
     function displaySolution(sol) {
         currentSolution = sol;
         document.getElementById('ofc-status').textContent = '🟢 Решено!';
         document.getElementById('ofc-status').style.background = '#27ae60';
+        
+        // Автоматически разворачиваем при новом решении
+        isCollapsed = false;
         document.getElementById('ofc-solution-box').style.display = 'block';
+        document.getElementById('ofc-arrow').textContent = '🔼';
 
         document.getElementById('sol-top').textContent = sol.top.join(' ');
         document.getElementById('sol-mid').textContent = sol.mid.join(' ');
@@ -305,20 +332,28 @@
     }
 
     // ==========================================
-    // 3. ПЕРЕХВАТ ВЕБ-СОКЕТОВ И ПАРСИНГ ФАНТАЗИИ
+    // 3. ПЕРЕХВАТ ВЕБ-СОКЕТОВ И ПАРСИНГ ФАНТАЗИИ (ИСПРАВЛЕНО)
     // ==========================================
     function parseFantasyCardsFromXML(xmlStr) {
         if (!xmlStr || typeof xmlStr !== 'string') return null;
         
-        if (xmlStr.includes('<DealingCards') || xmlStr.includes('<GameState')) {
-            let cardsMatches = xmlStr.match(/<Card id="\d+">([A-Za-z0-9]+)<\/Card>/g);
-            if (cardsMatches) {
-                let cards = cardsMatches.map(m => m.replace(/<[^>]+>/g, ''));
-                // ИГНОРИРУЕМ ЧУЖИЕ КАРТЫ (xx)
-                cards = cards.filter(c => c.toLowerCase() !== 'xx');
-                
-                if (cards.length >= 13 && cards.length <= 17) {
-                    return cards;
+        // ИЩЕМ СТРОГО БЛОК <Cards>...</Cards>, В КОТОРОМ 13 ИЛИ БОЛЕЕ КАРТ
+        // Это гарантирует, что мы не схватим карты с доски (LayOut), так как там карты разбиты по рядам (максимум 5 в одном блоке).
+        let cardsBlocks = xmlStr.match(/<Cards>([\s\S]*?)<\/Cards>/g);
+        
+        if (cardsBlocks) {
+            for (let block of cardsBlocks) {
+                let cardsMatches = block.match(/<Card[^>]*>([^<]+)<\/Card>/g);
+                if (cardsMatches) {
+                    let cards = cardsMatches.map(m => m.replace(/<[^>]+>/g, ''));
+                    
+                    // ИГНОРИРУЕМ ЧУЖИЕ КАРТЫ (xx)
+                    cards = cards.filter(c => c.toLowerCase() !== 'xx');
+                    
+                    // Если в ОДНОМ блоке <Cards> оказалось от 13 до 17 валидных карт — это 100% наша Фантазия!
+                    if (cards.length >= 13 && cards.length <= 17) {
+                        return cards;
+                    }
                 }
             }
         }
@@ -344,6 +379,8 @@
                         displaySolution(sol);
                     } else {
                         alert('Ошибка: не удалось найти решение без фола!');
+                        document.getElementById('ofc-status').textContent = '❌ Ошибка';
+                        document.getElementById('ofc-status').style.background = '#e74c3c';
                     }
                 }, 50);
             }

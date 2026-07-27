@@ -5,7 +5,7 @@
     }
     window.__ofcSolverActive = true;
 
-    console.log('🚀 OFC Fantasy Solver & Tracker v4.0 loaded!');
+    console.log('🚀 OFC Fantasy Solver & Tracker v5.0 (CSP Bypass Edition) loaded!');
 
     // ==========================================
     // 1. МАТЕМАТИЧЕСКИЙ ДВИЖОК SOLVER ENGINE
@@ -314,6 +314,9 @@
             let cardsMatches = xmlStr.match(/<Card id="\d+">([A-Za-z0-9]+)<\/Card>/g);
             if (cardsMatches) {
                 let cards = cardsMatches.map(m => m.replace(/<[^>]+>/g, ''));
+                // ИГНОРИРУЕМ ЧУЖИЕ КАРТЫ (xx)
+                cards = cards.filter(c => c.toLowerCase() !== 'xx');
+                
                 if (cards.length >= 13 && cards.length <= 17) {
                     return cards;
                 }

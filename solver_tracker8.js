@@ -5,7 +5,7 @@
     }
     window.__ofcSolverActive = true;
 
-    console.log('🚀 OFC Fantasy Solver v7.0 (Auto-Play Edition) loaded!');
+    console.log('🚀 OFC Fantasy Solver v8.0 loaded!');
 
     // ==========================================
     // 1. МАТЕМАТИЧЕСКИЙ ДВИЖОК SOLVER ENGINE
@@ -167,7 +167,6 @@
 
     function solveOFC(rawCardsArray, isUltimate = true) {
         let stayBonus = isUltimate ? 20.4 : 14.5;
-        // Извлекаем только имена карт для математики
         let cardNames = rawCardsArray.map(c => c.name);
         let cards = cardNames.map(parseCard);
         let n = cards.length;
@@ -252,7 +251,6 @@
 
         if (best.obj < 0) return null;
 
-        // Возвращаем полные объекты карт (с их оригинальными ID)
         let topRes = [], midRes = [], botRes = [], discRes = [];
         for (let i = 0; i < n; i++) {
             if (best.topMask & (1 << i)) topRes.push(rawCardsArray[i]);
@@ -277,13 +275,13 @@
 
         var hud = document.createElement('div');
         hud.id = 'ofc-solver-hud';
-        // Сдвинули top: 55px, чтобы не перекрывать Трекер!
-        hud.style.cssText = 'position:fixed;top:55px;left:10px;z-index:9999999;background:rgba(15,20,30,0.96);color:#fff;font-family:-apple-system,sans-serif;font-size:12px;padding:8px 12px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.8);border:1px solid #3b82f6;max-width:280px;user-select:none;transition:all 0.2s ease-in-out;';
+        // ВЕРНУЛ ПОЗИЦИЮ НА СТАРОЕ МЕСТО (top: 10px; left: 10px;)
+        hud.style.cssText = 'position:fixed;top:10px;left:10px;z-index:9999999;background:rgba(15,20,30,0.96);color:#fff;font-family:-apple-system,sans-serif;font-size:12px;padding:8px 12px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.8);border:1px solid #3b82f6;max-width:280px;user-select:none;transition:all 0.2s ease-in-out;';
         
         hud.innerHTML = `
             <div id="ofc-header" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;">
                 <div style="display:flex;align-items:center;gap:6px;">
-                    <strong style="color:#60a5fa;font-size:13px;">🏎️ OFC Solver</strong>
+                    <strong style="color:#60a5fa;font-size:13px;">🏎️ OFC Solver v8.0</strong>
                     <span id="ofc-status" style="font-size:10px;background:#f39c12;padding:2px 6px;border-radius:10px;">Ожидание...</span>
                 </div>
                 <span id="ofc-arrow" style="color:#3498db;font-size:14px;margin-left:10px;">🔽</span>
@@ -298,12 +296,13 @@
                 </div>
                 <label style="display:flex;align-items:center;gap:6px;cursor:pointer;background:rgba(59,130,246,0.15);padding:6px;border-radius:6px;border:1px solid rgba(59,130,246,0.3);">
                     <input type="checkbox" id="ofc-automove" style="accent-color:#3b82f6;width:14px;height:14px;">
-                    <span style="color:#60a5fa;font-weight:bold;">⚡ Авто-ход (Auto-Play)</span>
+                    <span style="color:#60a5fa;font-weight:bold;">⚡ Авто-расстановка</span>
                 </label>
             </div>
         `;
         parent.appendChild(hud);
 
+        // ИСПРАВЛЕННАЯ ЛОГИКА СВОРАЧИВАНИЯ (ТЕПЕРЬ ОТКРЫВАЕТСЯ ВСЕГДА)
         document.getElementById('ofc-header').onclick = function () {
             isCollapsed = !isCollapsed;
             const box = document.getElementById('ofc-solution-box');
@@ -313,12 +312,8 @@
                 box.style.display = 'none';
                 arrow.textContent = '🔽';
             } else {
-                if (currentSolution) {
-                    box.style.display = 'block';
-                    arrow.textContent = '🔼';
-                } else {
-                    isCollapsed = true;
-                }
+                box.style.display = 'block';
+                arrow.textContent = '🔼';
             }
         };
     }
@@ -332,7 +327,6 @@
         document.getElementById('ofc-solution-box').style.display = 'block';
         document.getElementById('ofc-arrow').textContent = '🔼';
 
-        // Извлекаем только имена для отображения
         document.getElementById('sol-top').textContent = sol.top.map(c => c.name).join(' ');
         document.getElementById('sol-mid').textContent = sol.mid.map(c => c.name).join(' ');
         document.getElementById('sol-bot').textContent = sol.bot.map(c => c.name).join(' ');
@@ -340,7 +334,7 @@
         document.getElementById('sol-roys').textContent = sol.roys;
         document.getElementById('sol-stay').textContent = sol.stays ? 'ДА 🔥' : 'Нет';
 
-        // Если включен Авто-ход — отправляем пакет!
+        // АВТО-ХОД
         if (document.getElementById('ofc-automove').checked && lastActiveWS) {
             sendAutoMovePacket(sol, lastActiveWS);
         }
@@ -351,19 +345,13 @@
     // ==========================================
     function sendAutoMovePacket(sol, ws) {
         let movesXML = '<MoveCards><Moves>';
-        
-        // Формируем XML с сохранением оригинальных ID карт
         sol.top.forEach((c, i) => movesXML += `<Move id="${c.id}" name="${c.name}" hand="FRONT" place="${i}"/>`);
         sol.mid.forEach((c, i) => movesXML += `<Move id="${c.id}" name="${c.name}" hand="MIDDLE" place="${i}"/>`);
         sol.bot.forEach((c, i) => movesXML += `<Move id="${c.id}" name="${c.name}" hand="BACK" place="${i}"/>`);
-        
         movesXML += '</Moves></MoveCards>';
 
         try {
             ws.send(movesXML);
-            console.log('⚡ Авто-ход отправлен:', movesXML);
-            
-            // Визуальное подтверждение
             let statusEl = document.getElementById('ofc-status');
             statusEl.textContent = '🚀 Отправлено!';
             statusEl.style.background = '#3b82f6';
@@ -371,9 +359,7 @@
                 statusEl.textContent = '🟢 Решено!';
                 statusEl.style.background = '#27ae60';
             }, 2000);
-        } catch (e) {
-            console.error('Ошибка отправки авто-хода:', e);
-        }
+        } catch (e) {}
     }
 
     // ==========================================
@@ -383,10 +369,8 @@
         if (!xmlStr || typeof xmlStr !== 'string') return null;
         
         let cardsBlocks = xmlStr.match(/<Cards>([\s\S]*?)<\/Cards>/g);
-        
         if (cardsBlocks) {
             for (let block of cardsBlocks) {
-                // Парсим и ID, и Имя карты: <Card id="12">Ah</Card>
                 let cardRegex = /<Card id="(\d+)">([^<]+)<\/Card>/g;
                 let match;
                 let cards = [];
@@ -417,9 +401,7 @@
             
             let fantasyCards = parseFantasyCardsFromXML(rawData);
             if (fantasyCards) {
-                console.log('🃏 Обнаружена Фантазия:', fantasyCards);
                 document.getElementById('ofc-status').textContent = '⏳ Считаем...';
-                
                 setTimeout(() => {
                     let sol = solveOFC(fantasyCards, true);
                     if (sol) {

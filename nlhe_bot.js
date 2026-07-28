@@ -1,27 +1,22 @@
 (function () {
-    // Удаляем старый HUD, если он был
     var oldHud = document.getElementById('nlhe-bot-hud');
     if (oldHud) oldHud.remove();
 
     window.__nlheBotActive = true;
-    console.log('🚀 NLHE Nit-Bot v1.1 loaded!');
+    console.log('🚀 NLHE Nit-Bot v2.0 (Pokerdom Native Protocol) loaded!');
 
     // ==========================================
     // 1. БАЗА ДАННЫХ И СОСТОЯНИЯ СТОЛОВ
     // ==========================================
     let tables = new Map();
-    let playersDB = {};
 
     function createTableState() {
         return {
             mySeat: -1,
             bbSize: 0,
-            pot: 0,
             board: [],
             holeCards: [],
-            players: {},
-            currentStreet: 0,
-            maxBet: 0,
+            currentStreet: 0, // 0-preflop, 1-flop, 2-turn, 3-river
             lastDecision: null
         };
     }
@@ -29,13 +24,13 @@
     // ==========================================
     // 2. ПОКЕРНАЯ МАТЕМАТИКА И СТРАТЕГИЯ (NIT-BOT)
     // ==========================================
-    const PREMIUM_HANDS = ['AA', 'KK', 'QQ', 'JJ', 'TT', 'AKs', 'AKo', 'AQs', 'AQo', 'AJs', 'KQs'];
+    const PREMIUM_HANDS = ['AA', 'KK', 'QQ', 'JJ', 'TT', '99', 'AKs', 'AKo', 'AQs', 'AQo', 'AJs', 'KQs'];
 
     function getHandString(cards) {
         if (!cards || cards.length !== 2) return '';
         let ranks = "23456789TJQKA";
-        let r1 = cards[0][0], s1 = cards[0][1];
-        let r2 = cards[1][0], s2 = cards[1][1];
+        let r1 = cards[0][0].toUpperCase(), s1 = cards[0][1].toLowerCase();
+        let r2 = cards[1][0].toUpperCase(), s2 = cards[1][1].toLowerCase();
         
         if (ranks.indexOf(r1) < ranks.indexOf(r2)) {
             let temp = r1; r1 = r2; r2 = temp;
@@ -46,82 +41,97 @@
 
     function decideAction(t) {
         let handStr = getHandString(t.holeCards);
-        let myStack = t.players[t.mySeat] ? t.players[t.mySeat].stack : 0;
         
-        let largestOpponentStack = 0;
-        for (let seat in t.players) {
-            if (parseInt(seat) !== t.mySeat && t.players[seat].active) {
-                if (t.players[seat].stack > largestOpponentStack) {
-                    largestOpponentStack = t.players[seat].stack;
-                }
-            }
-        }
-
-        let isSafeToAllin = largestOpponentStack <= (myStack / 2);
-
         // Префлоп
         if (t.currentStreet === 0) {
             if (PREMIUM_HANDS.includes(handStr)) {
-                if (t.maxBet > t.bbSize) {
-                    if (isSafeToAllin || ['AA', 'KK', 'QQ', 'AKs'].includes(handStr)) {
-                        return { action: 'RAISE', amount: t.maxBet * 3 };
-                    } else {
-                        return { action: 'FOLD' };
-                    }
+                if (['AA', 'KK', 'QQ', 'AKs'].includes(handStr)) {
+                    return { action: 'RAISE 3x', amount: (t.bbSize || 800) * 3, type: 'RAISE' };
                 } else {
-                    return { action: 'RAISE', amount: Math.max(t.bbSize * 3, 300) };
+                    return { action: 'CALL / RAISE', amount: (t.bbSize || 800) * 2.5, type: 'CALL' };
                 }
             } else {
-                return { action: 'FOLD' };
+                return { action: 'FOLD', type: 'FOLD' };
             }
         }
 
-        // Постфлоп (Пассивно-безопасный)
-        if (t.maxBet > 0) {
-            return { action: 'FOLD' };
-        } else {
-            return { action: 'CHECK' };
-        }
+        // Постфлоп
+        return { action: 'CHECK / FOLD', type: 'CHECK' };
     }
 
     // ==========================================
-    // 3. ПАРСЕР XML ПАКЕТОВ
+    // 3. ПАРСЕР XML ПАКЕТОВ (АДАПТИРОВАН ПОД ЛОГ)
     // ==========================================
     function parseNLHE(xml, t, ws) {
         if (!xml || typeof xml !== 'string') return;
 
-        let bbMatch = xml.match(/<CurrentLevel[^>]*pointScore="(\d+)"/);
+        // 1. Извлекаем размер ББ (highStake)
+        let bbMatch = xml.match(/highStake="(\d+)"/);
         if (bbMatch) t.bbSize = parseInt(bbMatch[1]);
 
-        let meMatch = xml.match(/<NewPlayer[^>]*me="true"[^>]*seat="(\d+)"/);
-        if (meMatch) t.mySeat = parseInt(meMatch[1]);
-
-        if (xml.includes('<NewHand')) {
-            t.board = [];
-            t.holeCards = [];
-            t.currentStreet = 0;
-            t.maxBet = t.bbSize;
-            updateHUD();
-        }
-
-        if (t.mySeat !== -1 && xml.includes('<DealingCards') && xml.includes(`seat="${t.mySeat}"`)) {
-            let cards = xml.match(/<Card id="\d+">([A-Za-z0-9]+)<\/Card>/g);
-            if (cards) {
-                t.holeCards = cards.map(c => c.replace(/<[^>]+>/g, ''));
-                updateHUD();
+        // 2. Поиск нашего места и карманных карт (поиск не-xx карт)
+        if (xml.includes('<DealingCards') || xml.includes('<NewHand')) {
+            let seatMatches = xml.match(/<Seat id="(\d+)"><Cards>(.*?)<\/Cards><\/Seat>/g);
+            if (seatMatches) {
+                for (let sm of seatMatches) {
+                    let seatId = sm.match(/<Seat id="(\d+)">/)[1];
+                    let cardMatches = sm.match(/<Card id="\d+">([A-Za-z0-9]+)<\/Card>/g);
+                    if (cardMatches) {
+                        let cards = cardMatches.map(c => c.replace(/<[^>]+>/g, ''));
+                        let realCards = cards.filter(c => c.toLowerCase() !== 'xx');
+                        if (realCards.length === 2) {
+                            t.mySeat = parseInt(seatId);
+                            t.holeCards = realCards;
+                            t.board = [];
+                            t.currentStreet = 0;
+                            t.lastDecision = null;
+                            updateHUD();
+                        }
+                    }
+                }
             }
         }
 
-        let boardMatch = xml.match(/<DealingCards street="(2|3|4)">.*?<Cards>(.*?)<\/Cards>/);
-        if (boardMatch) {
-            t.currentStreet = parseInt(boardMatch[1]) - 1;
-            let bCards = boardMatch[2].match(/<Card id="\d+">([A-Za-z0-9]+)<\/Card>/g);
-            if (bCards) {
-                t.board.push(...bCards.map(c => c.replace(/<[^>]+>/g, '')));
-                updateHUD();
+        // 3. Доска (Флоп)
+        if (xml.includes('<DealingFlop>')) {
+            let flopCards = xml.match(/<DealingFlop><Cards>(.*?)<\/Cards><\/DealingFlop>/);
+            if (flopCards) {
+                let cards = flopCards[1].match(/<Card id="\d+">([A-Za-z0-9]+)<\/Card>/g);
+                if (cards) {
+                    t.board = cards.map(c => c.replace(/<[^>]+>/g, ''));
+                    t.currentStreet = 1;
+                    updateHUD();
+                }
             }
         }
 
+        // 4. Доска (Терн)
+        if (xml.includes('<DealingTurn>')) {
+            let turnCard = xml.match(/<DealingTurn><Cards>(.*?)<\/Cards><\/DealingTurn>/);
+            if (turnCard) {
+                let card = turnCard[1].match(/<Card id="\d+">([A-Za-z0-9]+)<\/Card>/);
+                if (card) {
+                    t.board.push(card[1]);
+                    t.currentStreet = 2;
+                    updateHUD();
+                }
+            }
+        }
+
+        // 5. Доска (Ривер)
+        if (xml.includes('<DealingRiver>')) {
+            let riverCard = xml.match(/<DealingRiver><Cards>(.*?)<\/Cards><\/DealingRiver>/);
+            if (riverCard) {
+                let card = riverCard[1].match(/<Card id="\d+">([A-Za-z0-9]+)<\/Card>/);
+                if (card) {
+                    t.board.push(card[1]);
+                    t.currentStreet = 3;
+                    updateHUD();
+                }
+            }
+        }
+
+        // 6. Наш ход
         if (t.mySeat !== -1 && xml.includes(`<ActiveChange`) && xml.includes(`seat="${t.mySeat}"`)) {
             let decision = decideAction(t);
             t.lastDecision = decision;
@@ -138,9 +148,9 @@
 
     function executeAction(decision, seat, ws) {
         let xml = `<PlayerAction seat="${seat}">`;
-        if (decision.action === 'FOLD') xml += `<Fold/>`;
-        else if (decision.action === 'CHECK' || decision.action === 'CALL') xml += `<Call/>`;
-        else if (decision.action === 'RAISE') xml += `<Raise amount="${decision.amount}"/>`;
+        if (decision.type === 'FOLD') xml += `<Fold/>`;
+        else if (decision.type === 'CHECK' || decision.type === 'CALL') xml += `<Call/>`;
+        else if (decision.type === 'RAISE') xml += `<Raise amount="${decision.amount}"/>`;
         xml += `</PlayerAction>`;
         
         try {
@@ -194,23 +204,23 @@
 
         var hud = document.createElement('div');
         hud.id = 'nlhe-bot-hud';
-        hud.style.cssText = 'position:fixed;top:60px;left:10px;z-index:999999999;background:rgba(10,15,25,0.96);color:#fff;font-family:-apple-system,sans-serif;font-size:12px;padding:10px;border-radius:10px;border:2px solid #eab308;width:270px;box-shadow:0 10px 30px rgba(0,0,0,0.8);user-select:none;';
+        hud.style.cssText = 'position:fixed;top:60px;left:10px;z-index:999999999;background:rgba(10,15,25,0.95);color:#fff;font-family:-apple-system,sans-serif;font-size:12px;padding:10px;border-radius:10px;border:2px solid #eab308;width:270px;box-shadow:0 10px 30px rgba(0,0,0,0.8);user-select:none;';
         
         hud.innerHTML = `
             <div id="nlhe-header" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;border-bottom:1px solid #333;padding-bottom:6px;margin-bottom:8px;">
                 <div style="display:flex;align-items:center;gap:6px;">
                     <span id="nlhe-dot">🟢</span>
-                    <strong style="color:#fde047;font-size:13px;">🤖 NLHE Nit-Bot v1.1</strong>
+                    <strong style="color:#fde047;font-size:13px;">🤖 NLHE Nit-Bot v2.0</strong>
                 </div>
                 <span id="nlhe-arrow" style="font-size:14px;color:#3498db;">🔼</span>
             </div>
             <div id="nlhe-body">
                 <label style="display:flex;align-items:center;gap:8px;cursor:pointer;background:rgba(234,179,8,0.15);padding:6px 8px;border-radius:6px;margin-bottom:8px;border:1px solid rgba(234,179,8,0.3);">
                     <input type="checkbox" id="nlhe-automove" style="accent-color:#eab308;width:15px;height:15px;">
-                    <span style="color:#fde047;font-weight:bold;font-size:11px;">⚡ Авто-Игра (Auto-Play)</span>
+                    <span style="color:#fde047;font-weight:bold;font-size:11px;">⚡ Авто-Игра (Auto-Fold/Bet)</span>
                 </label>
                 <div id="nlhe-tables-container" style="max-height:220px;overflow-y:auto;">
-                    <div style="color:#aaa;text-align:center;padding:10px;font-size:11px;">🟡 Бот активен. Ожидание раздач...</div>
+                    <div style="color:#aaa;text-align:center;padding:10px;font-size:11px;">🟡 Бот активен. Ожидание раздачи...</div>
                 </div>
             </div>
         `;
@@ -233,11 +243,11 @@
         tables.forEach((t) => {
             if (t.holeCards.length > 0) {
                 let handStr = getHandString(t.holeCards);
-                let actionStr = t.lastDecision ? `<b style="color:#4ade80;font-size:13px;">${t.lastDecision.action}</b>` : 'Считаем...';
+                let actionStr = t.lastDecision ? `<b style="color:#4ade80;font-size:13px;">${t.lastDecision.action}</b>` : 'Ожидание...';
                 
                 html += `
                 <div style="background:#1f2937;padding:8px;border-radius:6px;margin-bottom:6px;border:1px solid #374151;">
-                    <div style="color:#9ca3af;font-size:10px;margin-bottom:2px;">Стол ${tableCount} | ББ: ${t.bbSize}</div>
+                    <div style="color:#9ca3af;font-size:10px;margin-bottom:2px;">Стол ${tableCount} | Место: ${t.mySeat} | ББ: ${t.bbSize}</div>
                     <div>Карты: <b style="color:#fde047;font-size:13px;">${t.holeCards.join(' ')}</b> (${handStr})</div>
                     <div>Борд: <b style="color:#60a5fa">${t.board.length ? t.board.join(' ') : '—'}</b></div>
                     <div style="margin-top:4px;border-top:1px dashed #444;padding-top:4px;">Совет: ${actionStr}</div>

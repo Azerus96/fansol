@@ -5,7 +5,7 @@
     }
     window.__ofcSolverActive = true;
 
-    console.log('🚀 OFC Fantasy Solver & Tracker v6.0 (Smart Trigger & Collapsible HUD) loaded!');
+    console.log('🚀 OFC Fantasy Solver v7.0 (Auto-Play Edition) loaded!');
 
     // ==========================================
     // 1. МАТЕМАТИЧЕСКИЙ ДВИЖОК SOLVER ENGINE
@@ -167,7 +167,9 @@
 
     function solveOFC(rawCardsArray, isUltimate = true) {
         let stayBonus = isUltimate ? 20.4 : 14.5;
-        let cards = rawCardsArray.map(parseCard);
+        // Извлекаем только имена карт для математики
+        let cardNames = rawCardsArray.map(c => c.name);
+        let cards = cardNames.map(parseCard);
         let n = cards.length;
 
         if (n < 13 || n > 17) return null;
@@ -250,6 +252,7 @@
 
         if (best.obj < 0) return null;
 
+        // Возвращаем полные объекты карт (с их оригинальными ID)
         let topRes = [], midRes = [], botRes = [], discRes = [];
         for (let i = 0; i < n; i++) {
             if (best.topMask & (1 << i)) topRes.push(rawCardsArray[i]);
@@ -262,11 +265,11 @@
     }
 
     // ==========================================
-    // 2. ИНТЕРФЕЙС HUD ДЛЯ ПОКЕРДОМА (СВОРАЧИВАЕМЫЙ)
+    // 2. ИНТЕРФЕЙС HUD ДЛЯ ПОКЕРДОМА
     // ==========================================
     let lastActiveWS = null;
     let currentSolution = null;
-    let isCollapsed = true; // По умолчанию свернут!
+    let isCollapsed = true;
 
     function renderHUD() {
         var parent = document.body || document.documentElement;
@@ -274,7 +277,8 @@
 
         var hud = document.createElement('div');
         hud.id = 'ofc-solver-hud';
-        hud.style.cssText = 'position:fixed;top:10px;left:10px;z-index:9999999;background:rgba(15,20,30,0.96);color:#fff;font-family:-apple-system,sans-serif;font-size:12px;padding:8px 12px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.8);border:1px solid #3b82f6;max-width:320px;user-select:none;transition:all 0.2s ease-in-out;';
+        // Сдвинули top: 55px, чтобы не перекрывать Трекер!
+        hud.style.cssText = 'position:fixed;top:55px;left:10px;z-index:9999999;background:rgba(15,20,30,0.96);color:#fff;font-family:-apple-system,sans-serif;font-size:12px;padding:8px 12px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.8);border:1px solid #3b82f6;max-width:280px;user-select:none;transition:all 0.2s ease-in-out;';
         
         hud.innerHTML = `
             <div id="ofc-header" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;">
@@ -289,7 +293,13 @@
                 <div style="margin-bottom:6px;"><span style="color:#aaa;">MID:</span> <b id="sol-mid" style="color:#f1c40f;">-</b></div>
                 <div style="margin-bottom:6px;"><span style="color:#aaa;">BOT:</span> <b id="sol-bot" style="color:#60a5fa;">-</b></div>
                 <div style="margin-bottom:8px;"><span style="color:#aaa;">DISC:</span> <b id="sol-disc" style="color:#ef4444;">-</b></div>
-                <div style="font-size:11px;color:#888;">Роялти: <b id="sol-roys" style="color:#f1c40f;">0</b> | Повтор: <b id="sol-stay" style="color:#4ade80;">Нет</b></div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <div style="font-size:11px;color:#888;">Роялти: <b id="sol-roys" style="color:#f1c40f;">0</b> | Повтор: <b id="sol-stay" style="color:#4ade80;">Нет</b></div>
+                </div>
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;background:rgba(59,130,246,0.15);padding:6px;border-radius:6px;border:1px solid rgba(59,130,246,0.3);">
+                    <input type="checkbox" id="ofc-automove" style="accent-color:#3b82f6;width:14px;height:14px;">
+                    <span style="color:#60a5fa;font-weight:bold;">⚡ Авто-ход (Auto-Play)</span>
+                </label>
             </div>
         `;
         parent.appendChild(hud);
@@ -318,42 +328,79 @@
         document.getElementById('ofc-status').textContent = '🟢 Решено!';
         document.getElementById('ofc-status').style.background = '#27ae60';
         
-        // Автоматически разворачиваем при новом решении
         isCollapsed = false;
         document.getElementById('ofc-solution-box').style.display = 'block';
         document.getElementById('ofc-arrow').textContent = '🔼';
 
-        document.getElementById('sol-top').textContent = sol.top.join(' ');
-        document.getElementById('sol-mid').textContent = sol.mid.join(' ');
-        document.getElementById('sol-bot').textContent = sol.bot.join(' ');
-        document.getElementById('sol-disc').textContent = sol.discard.join(' ');
+        // Извлекаем только имена для отображения
+        document.getElementById('sol-top').textContent = sol.top.map(c => c.name).join(' ');
+        document.getElementById('sol-mid').textContent = sol.mid.map(c => c.name).join(' ');
+        document.getElementById('sol-bot').textContent = sol.bot.map(c => c.name).join(' ');
+        document.getElementById('sol-disc').textContent = sol.discard.map(c => c.name).join(' ');
         document.getElementById('sol-roys').textContent = sol.roys;
         document.getElementById('sol-stay').textContent = sol.stays ? 'ДА 🔥' : 'Нет';
+
+        // Если включен Авто-ход — отправляем пакет!
+        if (document.getElementById('ofc-automove').checked && lastActiveWS) {
+            sendAutoMovePacket(sol, lastActiveWS);
+        }
     }
 
     // ==========================================
-    // 3. ПЕРЕХВАТ ВЕБ-СОКЕТОВ И ПАРСИНГ ФАНТАЗИИ (ИСПРАВЛЕНО)
+    // 4. ГЕНЕРАТОР ПАКЕТА АВТО-РАССТАНОВКИ
+    // ==========================================
+    function sendAutoMovePacket(sol, ws) {
+        let movesXML = '<MoveCards><Moves>';
+        
+        // Формируем XML с сохранением оригинальных ID карт
+        sol.top.forEach((c, i) => movesXML += `<Move id="${c.id}" name="${c.name}" hand="FRONT" place="${i}"/>`);
+        sol.mid.forEach((c, i) => movesXML += `<Move id="${c.id}" name="${c.name}" hand="MIDDLE" place="${i}"/>`);
+        sol.bot.forEach((c, i) => movesXML += `<Move id="${c.id}" name="${c.name}" hand="BACK" place="${i}"/>`);
+        
+        movesXML += '</Moves></MoveCards>';
+
+        try {
+            ws.send(movesXML);
+            console.log('⚡ Авто-ход отправлен:', movesXML);
+            
+            // Визуальное подтверждение
+            let statusEl = document.getElementById('ofc-status');
+            statusEl.textContent = '🚀 Отправлено!';
+            statusEl.style.background = '#3b82f6';
+            setTimeout(() => {
+                statusEl.textContent = '🟢 Решено!';
+                statusEl.style.background = '#27ae60';
+            }, 2000);
+        } catch (e) {
+            console.error('Ошибка отправки авто-хода:', e);
+        }
+    }
+
+    // ==========================================
+    // 5. ПЕРЕХВАТ ВЕБ-СОКЕТОВ И ПАРСИНГ ФАНТАЗИИ
     // ==========================================
     function parseFantasyCardsFromXML(xmlStr) {
         if (!xmlStr || typeof xmlStr !== 'string') return null;
         
-        // ИЩЕМ СТРОГО БЛОК <Cards>...</Cards>, В КОТОРОМ 13 ИЛИ БОЛЕЕ КАРТ
-        // Это гарантирует, что мы не схватим карты с доски (LayOut), так как там карты разбиты по рядам (максимум 5 в одном блоке).
         let cardsBlocks = xmlStr.match(/<Cards>([\s\S]*?)<\/Cards>/g);
         
         if (cardsBlocks) {
             for (let block of cardsBlocks) {
-                let cardsMatches = block.match(/<Card[^>]*>([^<]+)<\/Card>/g);
-                if (cardsMatches) {
-                    let cards = cardsMatches.map(m => m.replace(/<[^>]+>/g, ''));
-                    
-                    // ИГНОРИРУЕМ ЧУЖИЕ КАРТЫ (xx)
-                    cards = cards.filter(c => c.toLowerCase() !== 'xx');
-                    
-                    // Если в ОДНОМ блоке <Cards> оказалось от 13 до 17 валидных карт — это 100% наша Фантазия!
-                    if (cards.length >= 13 && cards.length <= 17) {
-                        return cards;
+                // Парсим и ID, и Имя карты: <Card id="12">Ah</Card>
+                let cardRegex = /<Card id="(\d+)">([^<]+)<\/Card>/g;
+                let match;
+                let cards = [];
+                
+                while ((match = cardRegex.exec(block)) !== null) {
+                    let id = match[1];
+                    let name = match[2];
+                    if (name.toLowerCase() !== 'xx') {
+                        cards.push({ id: id, name: name });
                     }
+                }
+                
+                if (cards.length >= 13 && cards.length <= 17) {
+                    return cards;
                 }
             }
         }
@@ -378,7 +425,6 @@
                     if (sol) {
                         displaySolution(sol);
                     } else {
-                        alert('Ошибка: не удалось найти решение без фола!');
                         document.getElementById('ofc-status').textContent = '❌ Ошибка';
                         document.getElementById('ofc-status').style.background = '#e74c3c';
                     }

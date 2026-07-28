@@ -1,16 +1,16 @@
 (function () {
-    if (window.__nlheBotActive) {
-        alert('⚠️ NLHE Bot уже запущен!');
-        return;
-    }
+    // Удаляем старый HUD, если он был
+    var oldHud = document.getElementById('nlhe-bot-hud');
+    if (oldHud) oldHud.remove();
+
     window.__nlheBotActive = true;
-    console.log('🚀 NLHE Nit-Bot v1.0 (Multi-Table Edition) loaded!');
+    console.log('🚀 NLHE Nit-Bot v1.1 loaded!');
 
     // ==========================================
     // 1. БАЗА ДАННЫХ И СОСТОЯНИЯ СТОЛОВ
     // ==========================================
-    let tables = new Map(); // Привязка WebSocket -> Состояние стола
-    let playersDB = {};     // Глобальное досье на игроков { nickname: { hands: 0, vpip: 0, pfr: 0 } }
+    let tables = new Map();
+    let playersDB = {};
 
     function createTableState() {
         return {
@@ -19,19 +19,20 @@
             pot: 0,
             board: [],
             holeCards: [],
-            players: {}, // seat -> { nick, stack, isAllin, active }
-            currentStreet: 0, // 0-preflop, 1-flop, 2-turn, 3-river
-            maxBet: 0
+            players: {},
+            currentStreet: 0,
+            maxBet: 0,
+            lastDecision: null
         };
     }
 
     // ==========================================
-    // 2. ПОКЕРНАЯ МАТЕМАТИКА И СТРАТЕГИЯ
+    // 2. ПОКЕРНАЯ МАТЕМАТИКА И СТРАТЕГИЯ (NIT-BOT)
     // ==========================================
     const PREMIUM_HANDS = ['AA', 'KK', 'QQ', 'JJ', 'TT', 'AKs', 'AKo', 'AQs', 'AQo', 'AJs', 'KQs'];
 
     function getHandString(cards) {
-        if (cards.length !== 2) return '';
+        if (!cards || cards.length !== 2) return '';
         let ranks = "23456789TJQKA";
         let r1 = cards[0][0], s1 = cards[0][1];
         let r2 = cards[1][0], s2 = cards[1][1];
@@ -43,12 +44,10 @@
         return r1 + r2 + suited;
     }
 
-    // Главный мозг бота
     function decideAction(t) {
         let handStr = getHandString(t.holeCards);
         let myStack = t.players[t.mySeat] ? t.players[t.mySeat].stack : 0;
         
-        // 1. Проверка правила "Защита стека" (Не рисковать всем стеком)
         let largestOpponentStack = 0;
         for (let seat in t.players) {
             if (parseInt(seat) !== t.mySeat && t.players[seat].active) {
@@ -60,55 +59,43 @@
 
         let isSafeToAllin = largestOpponentStack <= (myStack / 2);
 
-        // 2. ПРЕФЛОП СТРАТЕГИЯ
+        // Префлоп
         if (t.currentStreet === 0) {
             if (PREMIUM_HANDS.includes(handStr)) {
                 if (t.maxBet > t.bbSize) {
-                    // Кто-то уже рейзил. Если безопасно - пушим/коллим, иначе фолд (кроме AA/KK)
                     if (isSafeToAllin || ['AA', 'KK', 'QQ', 'AKs'].includes(handStr)) {
                         return { action: 'RAISE', amount: t.maxBet * 3 };
                     } else {
                         return { action: 'FOLD' };
                     }
                 } else {
-                    // Никто не рейзил, мы открываемся 3x BB
-                    return { action: 'RAISE', amount: t.bbSize * 3 };
+                    return { action: 'RAISE', amount: Math.max(t.bbSize * 3, 300) };
                 }
             } else {
-                // Мусорные карты -> Мгновенный фолд
                 return { action: 'FOLD' };
             }
         }
 
-        // 3. ПОСТФЛОП СТРАТЕГИЯ (Упрощенная: играем только от совпадений)
-        // В v1.0 бот играет постфлоп ОЧЕНЬ осторожно. Если есть агрессия - фолд.
+        // Постфлоп (Пассивно-безопасный)
         if (t.maxBet > 0) {
-            return { action: 'FOLD' }; // Бот-нит сбрасывает на агрессию без натса
+            return { action: 'FOLD' };
         } else {
-            return { action: 'CHECK' }; // Бесплатно смотрим следующую карту
+            return { action: 'CHECK' };
         }
     }
 
     // ==========================================
-    // 3. ПАРСЕР XML ПАКЕТОВ ПОКЕРДОМА
+    // 3. ПАРСЕР XML ПАКЕТОВ
     // ==========================================
     function parseNLHE(xml, t, ws) {
-        // Узнаем размер ББ
+        if (!xml || typeof xml !== 'string') return;
+
         let bbMatch = xml.match(/<CurrentLevel[^>]*pointScore="(\d+)"/);
         if (bbMatch) t.bbSize = parseInt(bbMatch[1]);
 
-        // Узнаем наше место
         let meMatch = xml.match(/<NewPlayer[^>]*me="true"[^>]*seat="(\d+)"/);
         if (meMatch) t.mySeat = parseInt(meMatch[1]);
 
-        // Парсинг стеков и ников
-        let playerMatch = /<PlayerInfo[^>]*nickname="([^"]+)"[^>]*>.*?<Chips[^>]*stack-size="(\d+)"/g;
-        let pm;
-        while ((pm = playerMatch.exec(xml)) !== null) {
-            // В реальном логе нужно сопоставлять seat и nickname, здесь упрощенно
-        }
-
-        // Начало новой раздачи
         if (xml.includes('<NewHand')) {
             t.board = [];
             t.holeCards = [];
@@ -117,8 +104,7 @@
             updateHUD();
         }
 
-        // Раздача карманных карт
-        if (xml.includes(`<DealingCards street="1"><Seat id="${t.mySeat}">`)) {
+        if (t.mySeat !== -1 && xml.includes('<DealingCards') && xml.includes(`seat="${t.mySeat}"`)) {
             let cards = xml.match(/<Card id="\d+">([A-Za-z0-9]+)<\/Card>/g);
             if (cards) {
                 t.holeCards = cards.map(c => c.replace(/<[^>]+>/g, ''));
@@ -126,7 +112,6 @@
             }
         }
 
-        // Раздача борда (Флоп, Терн, Ривер)
         let boardMatch = xml.match(/<DealingCards street="(2|3|4)">.*?<Cards>(.*?)<\/Cards>/);
         if (boardMatch) {
             t.currentStreet = parseInt(boardMatch[1]) - 1;
@@ -137,25 +122,16 @@
             }
         }
 
-        // Отслеживание VPIP (кто-то сделал Call или Raise)
-        if (xml.includes('<Call/>') || xml.includes('<Raise')) {
-            // Логика пополнения досье playersDB
-        }
-
-        // НАШ ХОД!
-        let activeMatch = new RegExp(`<ActiveChange[^>]*seat="${t.mySeat}"`);
-        if (activeMatch.test(xml)) {
+        if (t.mySeat !== -1 && xml.includes(`<ActiveChange`) && xml.includes(`seat="${t.mySeat}"`)) {
             let decision = decideAction(t);
-            
-            // Выводим решение в HUD
             t.lastDecision = decision;
             updateHUD();
 
-            // АВТО-ИГРА (Если включена галочка)
-            if (document.getElementById('nlhe-automove').checked) {
+            let autoCheck = document.getElementById('nlhe-automove');
+            if (autoCheck && autoCheck.checked) {
                 setTimeout(() => {
                     executeAction(decision, t.mySeat, ws);
-                }, 1500); // Пауза 1.5 секунды для имитации человека
+                }, 1200);
             }
         }
     }
@@ -163,8 +139,7 @@
     function executeAction(decision, seat, ws) {
         let xml = `<PlayerAction seat="${seat}">`;
         if (decision.action === 'FOLD') xml += `<Fold/>`;
-        else if (decision.action === 'CHECK') xml += `<Call/>`; // В XML чек часто передается как колл 0
-        else if (decision.action === 'CALL') xml += `<Call/>`;
+        else if (decision.action === 'CHECK' || decision.action === 'CALL') xml += `<Call/>`;
         else if (decision.action === 'RAISE') xml += `<Raise amount="${decision.amount}"/>`;
         xml += `</PlayerAction>`;
         
@@ -211,35 +186,37 @@
     } catch (e) {}
 
     // ==========================================
-    // 5. ИНТЕРФЕЙС (HUD) ДЛЯ 4 СТОЛОВ
+    // 5. ИНТЕРФЕЙС (HUD)
     // ==========================================
-    let isCollapsed = false;
-
     function renderHUD() {
         var parent = document.body || document.documentElement;
-        if (document.getElementById('nlhe-bot-hud')) return;
+        if (!parent) return;
 
         var hud = document.createElement('div');
         hud.id = 'nlhe-bot-hud';
-        hud.style.cssText = 'position:fixed;top:55px;left:10px;z-index:9999999;background:rgba(10,15,25,0.95);color:#fff;font-family:-apple-system,sans-serif;font-size:12px;padding:10px;border-radius:10px;border:1px solid #eab308;width:260px;transition:all 0.2s;';
+        hud.style.cssText = 'position:fixed;top:60px;left:10px;z-index:999999999;background:rgba(10,15,25,0.96);color:#fff;font-family:-apple-system,sans-serif;font-size:12px;padding:10px;border-radius:10px;border:2px solid #eab308;width:270px;box-shadow:0 10px 30px rgba(0,0,0,0.8);user-select:none;';
         
         hud.innerHTML = `
-            <div id="nlhe-header" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;border-bottom:1px solid #333;padding-bottom:5px;margin-bottom:5px;">
-                <strong style="color:#eab308;font-size:13px;">🤖 NLHE Nit-Bot</strong>
-                <span id="nlhe-arrow">🔼</span>
+            <div id="nlhe-header" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;border-bottom:1px solid #333;padding-bottom:6px;margin-bottom:8px;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span id="nlhe-dot">🟢</span>
+                    <strong style="color:#fde047;font-size:13px;">🤖 NLHE Nit-Bot v1.1</strong>
+                </div>
+                <span id="nlhe-arrow" style="font-size:14px;color:#3498db;">🔼</span>
             </div>
             <div id="nlhe-body">
-                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;background:rgba(234,179,8,0.15);padding:6px;border-radius:6px;margin-bottom:8px;">
-                    <input type="checkbox" id="nlhe-automove" style="accent-color:#eab308;width:14px;height:14px;">
-                    <span style="color:#fde047;font-weight:bold;">⚡ Авто-Игра (Auto-Fold/Bet)</span>
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;background:rgba(234,179,8,0.15);padding:6px 8px;border-radius:6px;margin-bottom:8px;border:1px solid rgba(234,179,8,0.3);">
+                    <input type="checkbox" id="nlhe-automove" style="accent-color:#eab308;width:15px;height:15px;">
+                    <span style="color:#fde047;font-weight:bold;font-size:11px;">⚡ Авто-Игра (Auto-Play)</span>
                 </label>
-                <div id="nlhe-tables-container" style="max-height:200px;overflow-y:auto;">
-                    <div style="color:#888;text-align:center;">Ожидание раздач...</div>
+                <div id="nlhe-tables-container" style="max-height:220px;overflow-y:auto;">
+                    <div style="color:#aaa;text-align:center;padding:10px;font-size:11px;">🟡 Бот активен. Ожидание раздач...</div>
                 </div>
             </div>
         `;
         parent.appendChild(hud);
 
+        let isCollapsed = false;
         document.getElementById('nlhe-header').onclick = function () {
             isCollapsed = !isCollapsed;
             document.getElementById('nlhe-body').style.display = isCollapsed ? 'none' : 'block';
@@ -253,16 +230,16 @@
         
         let html = '';
         let tableCount = 1;
-        tables.forEach((t, ws) => {
+        tables.forEach((t) => {
             if (t.holeCards.length > 0) {
                 let handStr = getHandString(t.holeCards);
-                let actionStr = t.lastDecision ? `<b style="color:#4ade80">${t.lastDecision.action}</b>` : 'Ожидание...';
+                let actionStr = t.lastDecision ? `<b style="color:#4ade80;font-size:13px;">${t.lastDecision.action}</b>` : 'Считаем...';
                 
                 html += `
-                <div style="background:#1f2937;padding:6px;border-radius:6px;margin-bottom:6px;">
-                    <div style="color:#9ca3af;font-size:10px;">Стол ${tableCount} | ББ: ${t.bbSize}</div>
-                    <div>Карты: <b style="color:#fff">${t.holeCards.join(' ')}</b> (${handStr})</div>
-                    <div>Борд: <b style="color:#60a5fa">${t.board.join(' ')}</b></div>
+                <div style="background:#1f2937;padding:8px;border-radius:6px;margin-bottom:6px;border:1px solid #374151;">
+                    <div style="color:#9ca3af;font-size:10px;margin-bottom:2px;">Стол ${tableCount} | ББ: ${t.bbSize}</div>
+                    <div>Карты: <b style="color:#fde047;font-size:13px;">${t.holeCards.join(' ')}</b> (${handStr})</div>
+                    <div>Борд: <b style="color:#60a5fa">${t.board.length ? t.board.join(' ') : '—'}</b></div>
                     <div style="margin-top:4px;border-top:1px dashed #444;padding-top:4px;">Совет: ${actionStr}</div>
                 </div>`;
                 tableCount++;

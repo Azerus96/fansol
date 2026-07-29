@@ -1,0 +1,44 @@
+name: Build WASM Engine to pkg/
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'shaders/**'
+      - 'Cargo.toml'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Rust Toolchain (wasm32)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build Rust to WebAssembly (Target Web)
+        run: |
+          wasm-pack build --target web --out-dir pkg
+          rm -f pkg/.gitignore  # ИСПРАВЛЕНО: Удаляем .gitignore чтобы Git не игнорировал бинарники!
+
+      - name: Commit Compiled WASM Back to Main
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "auto(wasm): rebuild WASM binaries in pkg/ [skip ci]"
+          file_pattern: 'pkg/*'
+          commit_user_name: 'GitHub Action Bot'
+          commit_user_email: 'actions@github.com'

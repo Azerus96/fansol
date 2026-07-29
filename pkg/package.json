@@ -1,0 +1,15 @@
+{
+  "name": "solver-gpu",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "solver_gpu_bg.wasm",
+    "solver_gpu.js",
+    "solver_gpu.d.ts"
+  ],
+  "main": "solver_gpu.js",
+  "types": "solver_gpu.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

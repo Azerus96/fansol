@@ -1,24 +1,31 @@
-name: Build WebGPU WASM Solver
+name: Build WASM Engine
 on: [push]
+
 jobs:
   build-wasm:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v3
+
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           target: wasm32-unknown-unknown
           override: true
+
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-      - name: Build WASM Module
+
+      - name: Build WASM
         run: wasm-pack build --target web --out-name solver_gpu
-      - name: Commit Generated WASM to Repo
+
+      - name: Commit WASM to Repo
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add pkg/
-          git commit -m "Auto-build WebGPU WASM Binary" || exit 0
+          git add pkg/ || true
+          git commit -m "Auto-build WASM binary" || exit 0
           git push

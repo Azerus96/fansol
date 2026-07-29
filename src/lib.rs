@@ -67,8 +67,9 @@ impl SolverEngine {
             Err(_) => return self.make_error_response("PARSE_ERROR"),
         };
 
+        // ИСПРАВЛЕНО: Добавлены события DealingCards и NewHand для Префлопа!
         match event.event_type.as_str() {
-            "DealingFlop" | "DealingTurn" | "DealingRiver" | "PlayerAction" => {
+            "DealingCards" | "NewHand" | "DealingFlop" | "DealingTurn" | "DealingRiver" | "PlayerAction" => {
                 self.run_gto_calculation(&event)
             }
             _ => self.make_error_response("UNKNOWN_EVENT"),
@@ -77,8 +78,8 @@ impl SolverEngine {
 
     fn run_gto_calculation(&self, _event: &PokerEvent) -> String {
         let (action, amount, ev) = match self.backend {
-            EngineBackend::WebGPU => ("BET", 2.5, 14.8),
-            EngineBackend::SimdCpu => ("BET", 2.5, 14.5),
+            EngineBackend::WebGPU => ("FOLD", 0.0, 0.0),
+            EngineBackend::SimdCpu => ("FOLD", 0.0, 0.0),
         };
 
         let result = SolverResult {

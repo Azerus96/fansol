@@ -14,7 +14,7 @@
     hudContainer.innerHTML = `
         <style>
             :host { position: fixed; top: 15px; right: 15px; z-index: 999999999; font-family: -apple-system, sans-serif; }
-            .hud-card { background: rgba(15, 23, 42, 0.96); border: 2px solid #3b82f6; border-radius: 10px; padding: 10px; color: #fff; width: 230px; box-shadow: 0 10px 25px rgba(0,0,0,0.7); user-select: none; transition: all 0.2s; }
+            .hud-card { background: rgba(15, 23, 42, 0.95); border: 2px solid #3b82f6; border-radius: 10px; padding: 10px; color: #fff; width: 230px; box-shadow: 0 10px 25px rgba(0,0,0,0.7); user-select: none; transition: all 0.2s; }
             .hud-title { font-size: 11px; font-weight: 700; color: #94a3b8; border-bottom: 1px solid #334155; padding-bottom: 5px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
             .hud-action { font-size: 16px; font-weight: 900; color: #22c55e; margin: 8px 0 4px 0; text-transform: uppercase; }
             .hud-stats { font-size: 11px; color: #cbd5e1; margin-bottom: 6px; }
@@ -51,7 +51,6 @@
 
     let engineInstance = null;
 
-    // 2. БЕЗБАГОВАЯ ЗАГРУЗКА WASM ЧЕРЕЗ FETCH
     async function loadWasmEngine() {
         const jsUrl = 'https://raw.githubusercontent.com/Azerus96/fansol/main/pkg/solver_gpu.js';
         const wasmUrl = 'https://raw.githubusercontent.com/Azerus96/fansol/main/pkg/solver_gpu_bg.wasm';
@@ -86,7 +85,7 @@
     }
     loadWasmEngine();
 
-    // 3. XML ПАРСЕР СОКЕТОВ ПОКЕРДОМА (С ПОДДЕРЖКОЙ ПРЕФЛОПА)
+    // 3. XML ПАРСЕР С ФИЛЬТРАЦИЕЙ ЧУЖИХ КАРТ (xx)
     const originalSend = WebSocket.prototype.send;
     const wsHandler = function (event) {
         if (typeof event.data !== 'string') return;
@@ -97,10 +96,11 @@
         let eventType = null;
         let payload = {};
 
-        // ИСПРАВЛЕНО: Добавлен детект Префлопа (<DealingCards> и <NewHand>)
+        // ИСПРАВЛЕНО: Фильтрация закрытых карт 'xx' от оппонентов
         if (/<DealingCards/.test(xml) || /<NewHand/.test(xml)) {
             eventType = 'DealingCards';
-            payload.cards = [...xml.matchAll(/<Card id="\d+">([A-Za-z0-9]+)<\/Card>/g)].map(m => m[1]);
+            let allCards = [...xml.matchAll(/<Card id="\d+">([A-Za-z0-9]+)<\/Card>/g)].map(m => m[1]);
+            payload.cards = allCards.filter(c => c.toLowerCase() !== 'xx');
         } else if (/<DealingFlop/.test(xml)) {
             eventType = 'DealingFlop';
             payload.cards = [...xml.matchAll(/<Card id="\d+">([A-Za-z0-9]+)<\/Card>/g)].map(m => m[1]);

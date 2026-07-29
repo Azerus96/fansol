@@ -46,13 +46,13 @@
         .btn-raise { background: #10b981; }
         .btn-start { background: #8b5cf6; width: 100%; margin-top: 8px; }
 
-        #log { margin-top: 10px; width: 100%; max-width: 500px; height: 90px; background: #020617; border: 1px solid #1e293b; border-radius: 8px; padding: 8px; font-family: monospace; font-size: 11px; overflow-y: auto; color: #94a3b8; }
+        #log { margin-top: 10px; width: 100%; max-width: 500px; height: 100px; background: #020617; border: 1px solid #1e293b; border-radius: 8px; padding: 8px; font-family: monospace; font-size: 11px; overflow-y: auto; color: #94a3b8; }
     </style>
 </head>
 <body>
 
     <h1>HU Poker vs GPU Solver</h1>
-    <div class="subtitle">Стек: 5000 | Блайнды: 125/250 (20 BB)</div>
+    <div class="subtitle">Стек: 5000 | SB: 125 / BB: 250 (20 BB)</div>
 
     <div id="table">
         <div class="player-area">
@@ -98,16 +98,18 @@
                 solver = new SolverEngine();
                 await solver.init_hardware();
                 isWasmLoaded = true;
-                log("✅ GPU/WASM Solver инициализирован!");
+                log("✅ WebGPU / WASM движок готов!");
             } catch (err) {
-                log("⚠️ Запуск в режиме CPU / GTO (ranges.json)");
+                log("⚠️ Запуск в режиме CPU / GTO");
             }
         }
         loadEngine();
 
         const SUITS = ['♠', '♥', '♦', '♣'];
         const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A'];
-        
+        const RANK_VALS = {'2':2, '3':3, '4':4, '5':5, '6':6, '7':7, '8':8, '9':9, 'T':10, 'J':11, 'Q':12, 'K':13, 'A':14};
+        const RANK_NAMES = {14:'Тузы', 13:'Короли', 12:'Дамы', 11:'Валеты', 10:'Десятки', 9:'Девятки', 8:'Восьмерки', 7:'Семерки', 6:'Шестерки', 5:'Пятерки', 4:'Четверки', 3:'Тройки', 2:'Двойки'};
+
         let state = {
             playerChips: 5000, botChips: 5000, pot: 0, button: 0,
             deck: [], playerCards: [], botCards: [], board: [],
@@ -122,7 +124,11 @@
 
         function createDeck() {
             let deck = [];
-            for (let r of RANKS) for (let s of SUITS) deck.push({ rank: r, suit: s, red: s === '♥' || s === '♦' });
+            for (let r of RANKS) {
+                for (let s of SUITS) {
+                    deck.push({ rank: r, suit: s, rVal: RANK_VALS[r], sVal: s, red: s === '♥' || s === '♦' });
+                }
+            }
             return deck.sort(() => Math.random() - 0.5);
         }
 
@@ -134,20 +140,26 @@
             state.board = [];
             state.street = 'preflop';
             state.handActive = true;
-            state.button = 1 - state.button;
+            state.button = 1 - state.button; // 0 = Player SB, 1 = Bot SB
 
             const sb = 125, bb = 250;
-            state.playerCurrentBet = state.button === 0 ? sb : bb;
-            state.botCurrentBet = state.button === 0 ? bb : sb;
+            if (state.button === 0) {
+                state.playerCurrentBet = Math.min(sb, state.playerChips);
+                state.botCurrentBet = Math.min(bb, state.botChips);
+            } else {
+                state.botCurrentBet = Math.min(sb, state.botChips);
+                state.playerCurrentBet = Math.min(bb, state.playerChips);
+            }
+
             state.playerChips -= state.playerCurrentBet;
             state.botChips -= state.botCurrentBet;
             state.pot = state.playerCurrentBet + state.botCurrentBet;
             state.currentBet = Math.max(state.playerCurrentBet, state.botCurrentBet);
 
-            log(`--- Раздача. Баттон: ${state.button === 0 ? 'Вы' : 'Бот'} ---`);
+            log(`--- Новая раздача. SB (${sb}): ${state.button === 0 ? 'Вы' : 'Бот'}, BB (${bb}): ${state.button === 1 ? 'Вы' : 'Бот'} ---`);
             renderUI();
 
-            if (state.button === 0) enableControls(true);
+            if (state.button === 0) enableControls(true); // SB ходит первым на префлопе
             else { enableControls(false); setTimeout(botTurn, 600); }
         };
 
@@ -163,6 +175,7 @@
             document.getElementById('player-cards').innerHTML = state.playerCards.map(c => renderCard(c)).join('');
             document.getElementById('bot-cards').innerHTML = state.botCards.map(c => renderCard(c, !showBotCards)).join('');
             document.getElementById('community-cards').innerHTML = state.board.map(c => renderCard(c)).join('');
+            
             const callAmt = state.currentBet - state.playerCurrentBet;
             document.getElementById('btn-call').innerText = callAmt > 0 ? `Колл ${callAmt}` : 'Чек';
         }
@@ -177,59 +190,159 @@
         window.playerAction = function(action) {
             enableControls(false);
             if (action === 'fold') {
-                log("Вы пасовали."); state.botChips += state.pot; endHand(); return;
+                log("Вы сбросили карты."); state.botChips += state.pot; endHand(); return;
             } else if (action === 'call') {
                 const paid = Math.min(state.currentBet - state.playerCurrentBet, state.playerChips);
                 state.playerChips -= paid; state.playerCurrentBet += paid; state.pot += paid;
+                log(`Вы сыграли ${paid > 0 ? 'Колл ' + paid : 'Чек'}.`);
             } else if (action === 'raise') {
-                const added = Math.min(500, state.playerChips);
+                const targetRaise = state.currentBet === 0 ? 500 : state.currentBet * 2;
+                const added = Math.min(targetRaise - state.playerCurrentBet, state.playerChips);
                 state.playerChips -= added; state.playerCurrentBet += added; state.pot += added; state.currentBet = state.playerCurrentBet;
+                log(`Вы сделали Рейз до ${state.currentBet}.`);
             }
             renderUI();
-            if (state.playerCurrentBet === state.botCurrentBet) nextStreet();
+
+            if (isStreetOver()) nextStreet();
             else setTimeout(botTurn, 600);
         };
 
         async function botTurn() {
             log("🤖 Бот думает...");
             let decision = 'call';
+            const callAmt = state.currentBet - state.botCurrentBet;
+
             if (isWasmLoaded && solver) {
                 try {
                     const res = solver.solve_auto_step(JSON.stringify({ street: state.street, pot: state.pot }));
                     decision = JSON.parse(res).action || 'call';
-                } catch(e) { decision = Math.random() > 0.3 ? 'call' : 'raise'; }
-            } else { decision = Math.random() > 0.3 ? 'call' : 'raise'; }
+                } catch(e) { decision = callAmt > 1000 ? (Math.random() > 0.4 ? 'call' : 'fold') : (Math.random() > 0.3 ? 'call' : 'raise'); }
+            } else {
+                decision = callAmt > 1000 ? (Math.random() > 0.4 ? 'call' : 'fold') : (Math.random() > 0.3 ? 'call' : 'raise');
+            }
 
-            if (decision === 'fold') {
-                log("🤖 Бот пасовал!"); state.playerChips += state.pot; endHand(); return;
+            if (decision === 'fold' && callAmt > 0) {
+                log("🤖 Бот пасовал (Fold)!"); state.playerChips += state.pot; endHand(); return;
             } else if (decision === 'raise' && state.botChips > 0) {
-                const added = Math.min(500, state.botChips);
+                const targetRaise = state.currentBet === 0 ? 500 : state.currentBet * 2;
+                const added = Math.min(targetRaise - state.botCurrentBet, state.botChips);
                 state.botChips -= added; state.botCurrentBet += added; state.pot += added; state.currentBet = state.botCurrentBet;
                 log(`🤖 Бот сделал Рейз до ${state.currentBet}!`);
             } else {
-                const paid = Math.min(state.currentBet - state.botCurrentBet, state.botChips);
+                const paid = Math.min(callAmt, state.botChips);
                 state.botChips -= paid; state.botCurrentBet += paid; state.pot += paid;
-                log("🤖 Бот принял ход.");
+                log(`🤖 Бот сыграл ${paid > 0 ? 'Колл' : 'Чек'}.`);
             }
             renderUI();
-            if (state.playerCurrentBet === state.botCurrentBet) nextStreet();
+
+            if (isStreetOver()) nextStreet();
             else enableControls(true);
+        }
+
+        function isStreetOver() {
+            return state.playerCurrentBet === state.botCurrentBet;
         }
 
         function nextStreet() {
             state.playerCurrentBet = 0; state.botCurrentBet = 0; state.currentBet = 0;
-            if (state.street === 'preflop') { state.street = 'flop'; state.board = [state.deck.pop(), state.deck.pop(), state.deck.pop()]; }
-            else if (state.street === 'flop') { state.street = 'turn'; state.board.push(state.deck.pop()); }
-            else if (state.street === 'turn') { state.street = 'river'; state.board.push(state.deck.pop()); }
-            else {
-                renderUI(true);
-                if (Math.random() > 0.5) { log("🎉 Вы выиграли!"); state.playerChips += state.pot; }
-                else { log("🤖 Бот выиграл!"); state.botChips += state.pot; }
-                endHand(); return;
-            }
+            if (state.street === 'preflop') { state.street = 'flop'; state.board = [state.deck.pop(), state.deck.pop(), state.deck.pop()]; log("--- ФЛОП ---"); }
+            else if (state.street === 'flop') { state.street = 'turn'; state.board.push(state.deck.pop()); log("--- ТЁРН ---"); }
+            else if (state.street === 'turn') { state.street = 'river'; state.board.push(state.deck.pop()); log("--- РИВЕР ---"); }
+            else { showdown(); return; }
+
             renderUI();
-            if (state.button === 1) enableControls(true);
+            // На постфлопе первым ходит игрок без баттона (BB)
+            if (state.button === 1) enableControls(true); // Player is BB -> Player acts first
             else { enableControls(false); setTimeout(botTurn, 600); }
+        }
+
+        // ================= ТЕХАССКИЙ ХОЛДЕМ: ОЦЕНКА РУК (7 КАРТ) =================
+        function evaluate5(cards) {
+            cards.sort((a, b) => b.rVal - a.rVal);
+            let ranks = cards.map(c => c.rVal);
+            let suits = cards.map(c => c.sVal);
+            let isFlush = suits.every(s => s === suits[0]);
+            let isStraight = false, straightHigh = 0;
+
+            if (ranks[0] - ranks[4] === 4 && new Set(ranks).size === 5) {
+                isStraight = true; straightHigh = ranks[0];
+            } else if (ranks[0] === 14 && ranks[1] === 5 && ranks[2] === 4 && ranks[3] === 3 && ranks[4] === 2) {
+                isStraight = true; straightHigh = 5;
+            }
+
+            if (isFlush && isStraight) return [9, straightHigh];
+            let counts = {}; for (let r of ranks) counts[r] = (counts[r] || 0) + 1;
+            let freq = Object.entries(counts).map(([r, c]) => ({ r: Number(r), c })).sort((a, b) => b.c - a.c || b.r - a.r);
+
+            if (freq[0].c === 4) return [8, freq[0].r, freq[1].r];
+            if (freq[0].c === 3 && freq[1].c === 2) return [7, freq[0].r, freq[1].r];
+            if (isFlush) return [6, ...ranks];
+            if (isStraight) return [5, straightHigh];
+            if (freq[0].c === 3) return [4, freq[0].r, freq[1].r, freq[2].r];
+            if (freq[0].c === 2 && freq[1].c === 2) return [3, freq[0].r, freq[1].r, freq[2].r];
+            if (freq[0].c === 2) return [2, freq[0].r, freq[1].r, freq[2].r, freq[3].r];
+            return [1, ...ranks];
+        }
+
+        function evaluate7(cards7) {
+            let bestScore = null;
+            function combos(arr, k) {
+                if (k === 0) return [[]];
+                if (arr.length === 0) return [];
+                let head = arr[0], tail = arr.slice(1);
+                return [...combos(tail, k - 1).map(c => [head, ...c]), ...combos(tail, k)];
+            }
+            for (let combo of combos(cards7, 5)) {
+                let score = evaluate5(combo);
+                if (!bestScore || compareScores(score, bestScore) > 0) bestScore = score;
+            }
+            return bestScore;
+        }
+
+        function compareScores(a, b) {
+            for (let i = 0; i < Math.max(a.length, b.length); i++) {
+                if ((a[i] || 0) > (b[i] || 0)) return 1;
+                if ((a[i] || 0) < (b[i] || 0)) return -1;
+            }
+            return 0;
+        }
+
+        function getHandName(score) {
+            const cat = score[0];
+            if (cat === 9) return `Стрит-флеш (до ${RANK_NAMES[score[1]]})`;
+            if (cat === 8) return `Каре (${RANK_NAMES[score[1]]})`;
+            if (cat === 7) return `Фулл-хаус (${RANK_NAMES[score[1]]} и ${RANK_NAMES[score[2]]})`;
+            if (cat === 6) return `Флеш (старший ${RANK_NAMES[score[1]]})`;
+            if (cat === 5) return `Стрит (до ${RANK_NAMES[score[1]]})`;
+            if (cat === 4) return `Тройка (${RANK_NAMES[score[1]]})`;
+            if (cat === 3) return `Две пары (${RANK_NAMES[score[1]]} и ${RANK_NAMES[score[2]]})`;
+            if (cat === 2) return `Пара (${RANK_NAMES[score[1]]})`;
+            return `Старшая карта (${RANK_NAMES[score[1]]})`;
+        }
+
+        function showdown() {
+            log("=== ВСКРЫТИЕ (SHOWDOWN) ===");
+            renderUI(true);
+
+            const pScore = evaluate7([...state.playerCards, ...state.board]);
+            const bScore = evaluate7([...state.botCards, ...state.board]);
+            const cmp = compareScores(pScore, bScore);
+
+            log(`👤 У вас: ${getHandName(pScore)}`);
+            log(`🤖 У бота: ${getHandName(bScore)}`);
+
+            if (cmp > 0) {
+                log(`🎉 Вы выиграли банк (${state.pot})!`);
+                state.playerChips += state.pot;
+            } else if (cmp < 0) {
+                log(`🤖 Бот выиграл банк (${state.pot})!`);
+                state.botChips += state.pot;
+            } else {
+                log(`🤝 Ничья (Split Pot)!`);
+                state.playerChips += Math.floor(state.pot / 2);
+                state.botChips += Math.floor(state.pot / 2);
+            }
+            endHand();
         }
 
         function endHand() {

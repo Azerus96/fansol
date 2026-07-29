@@ -26,6 +26,6 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add pkg/ || true
+          git add -f pkg/ Cargo.lock || true
           git commit -m "Auto-build WASM binary" || exit 0
           git push

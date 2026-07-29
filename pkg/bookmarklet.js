@@ -1,5 +1,5 @@
 (async function () {
-    console.log("[GTO Solver v2.0] Инициализация бота...");
+    console.log("[GTO Solver v2.0] Инициализация боевого бота...");
 
     const gameState = {
         heroSeat: null,
@@ -12,7 +12,7 @@
         lastHandId: null,
         position: "-",
         lastDecision: null,
-        availableActions: {} // Доступные действия (Fold, Check, Call, Raise)
+        availableActions: {} 
     };
 
     let solverEngine = null;
@@ -24,7 +24,6 @@
         return cardStr.slice(0, -1).toUpperCase() + cardStr.slice(-1).toLowerCase();
     }
 
-    // ИСПРАВЛЕНО: Точный расчет позиций для любого количества игроков
     function calculatePosition(dealerSeat, heroSeat, activeSeats) {
         if (dealerSeat === null || heroSeat === null || !activeSeats || activeSeats.length < 2) return "BTN";
         
@@ -32,7 +31,6 @@
         let dealerIdx = seats.indexOf(dealerSeat);
         if (dealerIdx === -1) dealerIdx = 0;
 
-        // Выстраиваем очередь ходов, начиная со следующего после дилера (SB)
         let ordered = [];
         for (let i = 1; i <= seats.length; i++) {
             ordered.push(seats[(dealerIdx + i) % seats.length]);
@@ -49,7 +47,6 @@
         return ["SB", "BB", "UTG", "MP", "CO", "BTN"][heroIdx];
     }
 
-    // ИСПРАВЛЕНО: Добавлена стрелочка сворачивания
     function createOrUpdateUI() {
         let overlay = document.getElementById("gto-solver-ui");
         if (!overlay) {
@@ -112,12 +109,77 @@
         });
     }
 
+    function executeAutoPlay(actionToTake) {
+        if (!window.AUTO_PLAY || !window.pokerSocket || !gameState.isHeroTurn) return;
+
+        let cmd = "";
+        if (actionToTake === "FOLD") {
+            cmd = gameState.availableActions.check ? "<Check/>" : "<Fold/>";
+        } else if (actionToTake === "CHECK") {
+            cmd = "<Check/>";
+        } else if (actionToTake === "CALL") {
+            if (gameState.availableActions.call !== undefined) cmd = `<Call amount="${gameState.availableActions.call}"/>`;
+            else if (gameState.availableActions.check) cmd = "<Check/>";
+        } else if (actionToTake === "RAISE") {
+            if (gameState.availableActions.raiseMin !== undefined) cmd = `<Raise amount="${gameState.availableActions.raiseMin}"/>`;
+            else if (gameState.availableActions.call !== undefined) cmd = `<Call amount="${gameState.availableActions.call}"/>`;
+            else cmd = "<Check/>";
+        }
+
+        if (cmd) {
+            console.log("[BOT] Отправка XML команды:", cmd);
+            setTimeout(() => {
+                if (window.pokerSocket && window.pokerSocket.readyState === 1) {
+                    window.pokerSocket.send(cmd);
+                    gameState.isHeroTurn = false; 
+                    createOrUpdateUI();
+                }
+            }, 600 + Math.random() * 800); 
+        }
+    }
+
+    async function runSolverEngine() {
+        if (!solverEngine) {
+            try {
+                const wasmModule = await import("https://fastly.jsdelivr.net/gh/Azerus96/fansol@main/pkg/solver_gpu.js");
+                await wasmModule.default();
+                solverEngine = new wasmModule.SolverEngine();
+            } catch (e) { console.warn("[BOT] Ошибка WASM:", e); }
+        }
+
+        const payload = {
+            hero_seat: gameState.heroSeat,
+            hero_cards: gameState.heroCards,
+            board: gameState.boardCards,
+            pot: gameState.currentPot,
+            position: gameState.position
+        };
+
+        let decisionText = "CHECK / FOLD";
+        let rawAction = null;
+
+        if (solverEngine) {
+            try {
+                const responseJson = solverEngine.solve_auto_step(JSON.stringify(payload));
+                const parsed = JSON.parse(responseJson);
+                rawAction = parsed.action; 
+                decisionText = parsed.action || decisionText;
+            } catch (e) { console.error("[BOT] Ошибка solve_auto_step:", e); }
+        }
+
+        gameState.lastDecision = decisionText;
+        createOrUpdateUI();
+        
+        if (rawAction) {
+            executeAutoPlay(rawAction);
+        }
+    }
+
     function parseXMLMessage(xmlString) {
         try {
             const parser = new DOMParser();
             const xml = parser.parseFromString(xmlString, "text/xml");
 
-            // ИСПРАВЛЕНО: Очистка карт на шоудауне
             if (xml.querySelector("EndHand") || xml.querySelector("Winners")) {
                 gameState.heroCards = [];
                 gameState.boardCards = [];
@@ -175,7 +237,6 @@
                 const activeSeat = parseInt(activeChange.getAttribute("seat"));
                 gameState.isHeroTurn = (activeSeat === gameState.heroSeat);
 
-                // ИСПРАВЛЕНО: Парсим доступные действия для Авто-хода
                 if (gameState.isHeroTurn) {
                     const actionsNode = activeChange.querySelector("Actions");
                     gameState.availableActions = {};
@@ -197,72 +258,12 @@
         } catch (err) { console.error("[BOT] Ошибка XML:", err); }
     }
 
-    // ИСПРАВЛЕНО: Логика выполнения Авто-хода через WebSocket
-    function executeAutoPlay(decision) {
-        if (!window.AUTO_PLAY || !window.pokerSocket || !gameState.isHeroTurn) return;
-
-        let cmd = "";
-        if (decision === "FOLD") {
-            cmd = gameState.availableActions.check ? "<Check/>" : "<Fold/>";
-        } else if (decision === "CHECK") {
-            cmd = "<Check/>";
-        } else if (decision === "CALL") {
-            if (gameState.availableActions.call !== undefined) cmd = `<Call amount="${gameState.availableActions.call}"/>`;
-            else if (gameState.availableActions.check) cmd = "<Check/>";
-        } else if (decision === "RAISE") {
-            if (gameState.availableActions.raiseMin !== undefined) cmd = `<Raise amount="${gameState.availableActions.raiseMin}"/>`;
-            else if (gameState.availableActions.call !== undefined) cmd = `<Call amount="${gameState.availableActions.call}"/>`;
-        }
-
-        if (cmd) {
-            console.log("[BOT] Выполняю авто-ход:", cmd);
-            setTimeout(() => {
-                if (window.pokerSocket && window.pokerSocket.readyState === 1) {
-                    window.pokerSocket.send(cmd);
-                }
-            }, 800 + Math.random() * 1000); // Рандомная задержка 0.8 - 1.8 сек
-        }
-    }
-
-    async function runSolverEngine() {
-        if (!solverEngine) {
-            try {
-                const wasmModule = await import("https://fastly.jsdelivr.net/gh/Azerus96/fansol@main/pkg/solver_gpu.js");
-                await wasmModule.default();
-                solverEngine = new wasmModule.SolverEngine();
-            } catch (e) { console.warn("[BOT] Ошибка WASM:", e); }
-        }
-
-        const payload = {
-            hero_seat: gameState.heroSeat,
-            hero_cards: gameState.heroCards,
-            board: gameState.boardCards,
-            pot: gameState.currentPot,
-            position: gameState.position
-        };
-
-        let decision = "CHECK / FOLD";
-        if (solverEngine) {
-            try {
-                const responseJson = solverEngine.solve_auto_step(JSON.stringify(payload));
-                const parsed = JSON.parse(responseJson);
-                decision = parsed.action || decision;
-            } catch (e) { console.error("[BOT] Ошибка solve_auto_step:", e); }
-        }
-
-        gameState.lastDecision = decision;
-        createOrUpdateUI();
-        
-        // Запускаем авто-ход
-        executeAutoPlay(decision);
-    }
-
     const OriginalWebSocket = window.WebSocket;
     window.WebSocket = function (url, protocols) {
         const ws = new OriginalWebSocket(url, protocols);
         ws.addEventListener("message", function (event) {
             if (typeof event.data === "string" && event.data.includes("<Message>")) {
-                window.pokerSocket = ws; // ИСПРАВЛЕНО: Сохраняем сокет для отправки команд
+                window.pokerSocket = ws; 
                 parseXMLMessage(event.data);
             }
         });

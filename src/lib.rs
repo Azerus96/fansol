@@ -8,13 +8,14 @@ pub enum EngineBackend {
     SimdCpu = 1,
 }
 
-#[derive(Deserialize)]
-struct PokerEvent {
-    #[serde(rename = "type")]
-    event_type: String,
-    cards: Option<Vec<String>>,
-    action: Option<String>,
-    amount: Option<f64>,
+// ИСПРАВЛЕНО: Структура теперь точно совпадает с payload из JS
+#[derive(Deserialize, Debug)]
+pub struct PokerEvent {
+    pub hero_seat: Option<u32>,
+    pub hero_cards: Vec<String>,
+    pub board: Vec<String>,
+    pub pot: f64,
+    pub position: String,
 }
 
 #[derive(Serialize)]
@@ -64,28 +65,26 @@ impl SolverEngine {
     pub fn solve_auto_step(&self, event_json: &str) -> String {
         let event: PokerEvent = match serde_json::from_str(event_json) {
             Ok(ev) => ev,
-            Err(_) => return self.make_error_response("PARSE_ERROR"),
+            Err(e) => return self.make_error_response(&format!("PARSE_ERROR: {}", e)),
         };
 
-        // ИСПРАВЛЕНО: Добавлены события DealingCards и NewHand для Префлопа!
-        match event.event_type.as_str() {
-            "DealingCards" | "NewHand" | "DealingFlop" | "DealingTurn" | "DealingRiver" | "PlayerAction" => {
-                self.run_gto_calculation(&event)
-            }
-            _ => self.make_error_response("UNKNOWN_EVENT"),
-        }
+        self.run_gto_calculation(&event)
     }
 
-    fn run_gto_calculation(&self, _event: &PokerEvent) -> String {
-        let (action, amount, ev) = match self.backend {
-            EngineBackend::WebGPU => ("FOLD", 0.0, 0.0),
-            EngineBackend::SimdCpu => ("FOLD", 0.0, 0.0),
+    fn run_gto_calculation(&self, event: &PokerEvent) -> String {
+        // ВРЕМЕННАЯ ЛОГИКА ДЛЯ ТЕСТА АВТО-ХОДА:
+        // Если у нас есть карты, возвращаем CALL, чтобы проверить авто-клик.
+        // Замени это на вызов своего CFR/WGSL солвера!
+        let action = if event.hero_cards.len() == 2 {
+            "CALL"
+        } else {
+            "FOLD"
         };
 
         let result = SolverResult {
             action: action.to_string(),
-            amount,
-            ev,
+            amount: 0.0,
+            ev: 0.0,
             backend: match self.backend {
                 EngineBackend::WebGPU => "WebGPU".to_string(),
                 EngineBackend::SimdCpu => "CPU_SIMD".to_string(),

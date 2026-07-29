@@ -8,7 +8,6 @@ pub enum EngineBackend {
     SimdCpu = 1,
 }
 
-// ИСПРАВЛЕНО: Структура теперь точно совпадает с payload из JS
 #[derive(Deserialize, Debug)]
 pub struct PokerEvent {
     pub hero_seat: Option<u32>,
@@ -72,9 +71,8 @@ impl SolverEngine {
     }
 
     fn run_gto_calculation(&self, event: &PokerEvent) -> String {
-        // ВРЕМЕННАЯ ЛОГИКА ДЛЯ ТЕСТА АВТО-ХОДА:
-        // Если у нас есть карты, возвращаем CALL, чтобы проверить авто-клик.
-        // Замени это на вызов своего CFR/WGSL солвера!
+        // Temporary logic to test the auto-play execution.
+        // Replace this with your actual CFR/WGSL solver logic!
         let action = if event.hero_cards.len() == 2 {
             "CALL"
         } else {

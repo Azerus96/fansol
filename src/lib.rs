@@ -1,5 +1,4 @@
 use wasm_bindgen::prelude::*;
-use wasm_bindgen_futures::JsFuture;
 use serde::{Deserialize, Serialize};
 
 #[wasm_bindgen]
@@ -29,7 +28,6 @@ struct SolverResult {
 #[wasm_bindgen]
 pub struct SolverEngine {
     backend: EngineBackend,
-    gpu_device: Option<web_sys::GpuDevice>,
 }
 
 #[wasm_bindgen]
@@ -39,7 +37,6 @@ impl SolverEngine {
         console_error_panic_hook::set_once();
         Self {
             backend: EngineBackend::SimdCpu,
-            gpu_device: None,
         }
     }
 
@@ -53,24 +50,9 @@ impl SolverEngine {
         if js_sys::Reflect::has(&navigator, &JsValue::from_str("gpu")).unwrap_or(false) {
             let gpu_val = js_sys::Reflect::get(&navigator, &JsValue::from_str("gpu"))?;
             if !gpu_val.is_undefined() && !gpu_val.is_null() {
-                let gpu: web_sys::Gpu = gpu_val.dyn_into()?;
-                let adapter_promise = gpu.request_adapter();
-                let adapter_val = JsFuture::from(adapter_promise).await;
-
-                if let Ok(adapter) = adapter_val {
-                    if !adapter.is_null() && !adapter.is_undefined() {
-                        let adapter_obj: web_sys::GpuAdapter = adapter.dyn_into()?;
-                        let device_promise = adapter_obj.request_device();
-                        let device_val = JsFuture::from(device_promise).await;
-
-                        if let Ok(device) = device_val {
-                            self.gpu_device = Some(device.dyn_into()?);
-                            self.backend = EngineBackend::WebGPU;
-                            web_sys::console::log_1(&"[WASM Engine] WebGPU Hardware Activated".into());
-                            return Ok(EngineBackend::WebGPU as u8);
-                        }
-                    }
-                }
+                self.backend = EngineBackend::WebGPU;
+                web_sys::console::log_1(&"[WASM Engine] WebGPU Hardware Activated".into());
+                return Ok(EngineBackend::WebGPU as u8);
             }
         }
 
